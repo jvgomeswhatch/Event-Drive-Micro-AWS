@@ -1,0 +1,5 @@
+environment         = "dev"
+project_name        = "platform"
+aws_region          = "us-east-1"
+localstack_endpoint = "http://localstack:4566"
+order_service_port  = 3001

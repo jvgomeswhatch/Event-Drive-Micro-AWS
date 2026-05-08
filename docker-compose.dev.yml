@@ -1,0 +1,28 @@
+services:
+  order-service:
+    build:
+      target: dev
+    volumes:
+      - ./services/order-service:/app
+      - ./docker/air.toml:/air.toml:ro
+
+  payment-service:
+    build:
+      target: dev
+    volumes:
+      - ./services/payment-service:/app
+      - ./docker/air.toml:/air.toml:ro
+
+  inventory-service:
+    build:
+      target: dev
+    volumes:
+      - ./services/inventory-service:/app
+      - ./docker/air.toml:/air.toml:ro
+
+  notification-service:
+    build:
+      target: dev
+    volumes:
+      - ./services/notification-service:/app
+      - ./docker/air.toml:/air.toml:ro

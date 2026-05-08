@@ -1,0 +1,37 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://platform/events/v1/payment.failed",
+  "title": "payment.failed",
+  "description": "Emitido pelo payment-service quando o processamento de pagamento falha. A mensagem é roteada para a DLQ após esgotar o número máximo de tentativas.",
+  "version": "1",
+  "type": "object",
+  "required": ["eventType", "version", "paymentId", "orderId", "customerId", "totalAmount", "status", "failureReason", "_meta"],
+  "additionalProperties": false,
+  "properties": {
+    "eventType":     { "type": "string", "const": "payment.failed" },
+    "version":       { "type": "string", "const": "1" },
+    "paymentId":     { "type": "string", "format": "uuid" },
+    "orderId":       { "type": "string", "format": "uuid" },
+    "customerId":    { "type": "string", "minLength": 1, "maxLength": 128 },
+    "totalAmount":   { "type": "number", "minimum": 0 },
+    "status":        { "type": "string", "const": "failed" },
+    "failureReason": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Motivo legível da falha. Não usar para ramificação programática — use o eventType."
+    },
+    "_meta": { "$ref": "#/definitions/EventMeta" }
+  },
+  "definitions": {
+    "EventMeta": {
+      "type": "object",
+      "required": ["correlationId", "publishedAt", "publisher"],
+      "additionalProperties": false,
+      "properties": {
+        "correlationId": { "type": "string" },
+        "publishedAt":   { "type": "string", "format": "date-time" },
+        "publisher":     { "type": "string", "const": "payment-service" }
+      }
+    }
+  }
+}

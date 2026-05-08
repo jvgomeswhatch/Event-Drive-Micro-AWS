@@ -1,0 +1,54 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: docker-containers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          - name: label
+            values: ["com.docker.compose.project"]
+
+    relabel_configs:
+      # Use the container name as the job label
+      - source_labels: [__meta_docker_container_name]
+        regex: /(.*)
+        target_label: job
+
+      # Preserve the container image
+      - source_labels: [__meta_docker_container_image]
+        target_label: image
+
+      # Add compose service name
+      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+        target_label: service
+
+    pipeline_stages:
+      # Parse JSON logs emitted by Go services
+      - json:
+          expressions:
+            level:         level
+            correlationId: correlationId
+            traceId:       traceId
+            spanId:        spanId
+            operation:     operation
+            service_name:  service
+            msg:           message
+
+      # Promote log level as a Loki label for fast filtering
+      - labels:
+          level:
+          service_name:
+
+      # Drop debug logs in non-dev environments to reduce ingestion volume
+      - drop:
+          expression: '.*"level":"debug".*'
+          drop_counter_reason: debug_logs_dropped

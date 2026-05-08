@@ -1,0 +1,268 @@
+networks:
+  platform-net:
+    driver: bridge
+
+volumes:
+  localstack-data:
+  loki-data:
+  grafana-data:
+
+services:
+  # ─────────────────────────────────────────
+  # LocalStack — AWS simulation
+  # ─────────────────────────────────────────
+  localstack:
+    image: localstack/localstack:3.4
+    container_name: localstack
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=sqs,sns,dynamodb,lambda,apigateway,iam,s3,logs
+      - DEBUG=0
+      - PERSISTENCE=1
+      - LAMBDA_EXECUTOR=docker
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - AWS_DEFAULT_REGION=us-east-1
+    volumes:
+      - localstack-data:/var/lib/localstack
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./docker/localstack/init:/etc/localstack/init/ready.d
+    networks:
+      - platform-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ─────────────────────────────────────────
+  # Terraform bootstrap (runs once)
+  # ─────────────────────────────────────────
+  terraform-init:
+    image: hashicorp/terraform:1.8
+    container_name: terraform-init
+    working_dir: /infra
+    entrypoint: ["/bin/sh", "/infra/scripts/tf-apply.sh"]
+    volumes:
+      - ./infra:/infra
+      - ./scripts:/infra/scripts
+    environment:
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - TF_VAR_environment=dev
+      - TF_VAR_localstack_endpoint=http://localstack:4566
+    networks:
+      - platform-net
+    depends_on:
+      localstack:
+        condition: service_healthy
+
+  # ─────────────────────────────────────────
+  # order-service
+  # ─────────────────────────────────────────
+  order-service:
+    build:
+      context: ./services/order-service
+      dockerfile: Dockerfile
+    container_name: order-service
+    ports:
+      - "3001:3001"
+    env_file: .env
+    environment:
+      - LOCALSTACK_ENDPOINT=http://localstack:4566
+      - SERVICE_NAME=order-service
+      - APP_ENV=development
+    labels:
+      logging: "promtail"
+      service: "order-service"
+    networks:
+      - platform-net
+    depends_on:
+      localstack:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "-O", "/dev/null", "http://localhost:3001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────
+  # payment-service
+  # ─────────────────────────────────────────
+  payment-service:
+    build:
+      context: ./services/payment-service
+      dockerfile: Dockerfile
+    container_name: payment-service
+    ports:
+      - "3002:3002"
+    env_file: .env
+    environment:
+      - LOCALSTACK_ENDPOINT=http://localstack:4566
+      - SERVICE_NAME=payment-service
+      - APP_ENV=development
+    labels:
+      logging: "promtail"
+      service: "payment-service"
+    networks:
+      - platform-net
+    depends_on:
+      localstack:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "-O", "/dev/null", "http://localhost:3002/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────
+  # inventory-service
+  # ─────────────────────────────────────────
+  inventory-service:
+    build:
+      context: ./services/inventory-service
+      dockerfile: Dockerfile
+    container_name: inventory-service
+    ports:
+      - "3003:3003"
+    env_file: .env
+    environment:
+      - LOCALSTACK_ENDPOINT=http://localstack:4566
+      - SERVICE_NAME=inventory-service
+      - APP_ENV=development
+    labels:
+      logging: "promtail"
+      service: "inventory-service"
+    networks:
+      - platform-net
+    depends_on:
+      localstack:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "-O", "/dev/null", "http://localhost:3003/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────
+  # notification-service
+  # ─────────────────────────────────────────
+  notification-service:
+    build:
+      context: ./services/notification-service
+      dockerfile: Dockerfile
+    container_name: notification-service
+    ports:
+      - "3004:3004"
+    env_file: .env
+    environment:
+      - LOCALSTACK_ENDPOINT=http://localstack:4566
+      - SERVICE_NAME=notification-service
+      - APP_ENV=development
+    labels:
+      logging: "promtail"
+      service: "notification-service"
+    networks:
+      - platform-net
+    depends_on:
+      localstack:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "-O", "/dev/null", "http://localhost:3004/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────
+  # Loki — log aggregation
+  # ─────────────────────────────────────────
+  loki:
+    image: grafana/loki:2.9.7
+    container_name: loki
+    ports:
+      - "3100:3100"
+    user: root
+    command: -config.file=/etc/loki/loki-config.yaml
+    volumes:
+      - ./docker/loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki-data:/tmp/loki
+    networks:
+      - platform-net
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3100/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ─────────────────────────────────────────
+  # Promtail — log shipper (Docker → Loki)
+  # ─────────────────────────────────────────
+  promtail:
+    image: grafana/promtail:2.9.7
+    container_name: promtail
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - ./docker/loki/promtail-config.yaml:/etc/promtail/config.yaml:ro
+    command: -config.file=/etc/promtail/config.yaml
+    networks:
+      - platform-net
+    depends_on:
+      loki:
+        condition: service_healthy
+
+  # ─────────────────────────────────────────
+  # Grafana — dashboards
+  # ─────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+      - GF_FEATURE_TOGGLES_ENABLE=publicDashboards
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - platform-net
+    depends_on:
+      loki:
+        condition: service_healthy
+
+  # ─────────────────────────────────────────
+  # frontend
+  # ─────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: dev
+    container_name: frontend
+    ports:
+      - "5173:5173"
+    env_file: .env
+    environment:
+      - VITE_API_BASE_URL=http://localhost:3001
+      - VITE_CORRELATION_DEBUG=true
+    networks:
+      - platform-net
+    depends_on:
+      order-service:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://0.0.0.0:5173"]
+      interval: 15s
+      timeout: 5s
+      retries: 5

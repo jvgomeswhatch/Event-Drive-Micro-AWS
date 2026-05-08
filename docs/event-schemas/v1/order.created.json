@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://platform/events/v1/order.created",
+  "title": "order.created",
+  "description": "Emitido pelo order-service quando um novo pedido é persistido com sucesso e enfileirado.",
+  "version": "1",
+  "type": "object",
+  "required": ["eventType", "version", "orderId", "customerId", "items", "_meta"],
+  "additionalProperties": false,
+  "properties": {
+    "eventType": {
+      "type": "string",
+      "const": "order.created"
+    },
+    "version": {
+      "type": "string",
+      "const": "1"
+    },
+    "orderId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Identificador único do pedido (UUIDv4)"
+    },
+    "customerId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "required": ["productId", "quantity"],
+        "additionalProperties": false,
+        "properties": {
+          "productId": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "quantity":  { "type": "integer", "minimum": 1, "maximum": 1000 }
+        }
+      }
+    },
+    "simulateFailure": {
+      "type": "boolean",
+      "default": false,
+      "description": "Flag de dev/teste — aciona falha de pagamento no payment-service"
+    },
+    "_meta": { "$ref": "#/definitions/EventMeta" }
+  },
+  "definitions": {
+    "EventMeta": {
+      "type": "object",
+      "required": ["correlationId", "publishedAt", "publisher"],
+      "additionalProperties": false,
+      "properties": {
+        "correlationId": { "type": "string", "minLength": 1 },
+        "publishedAt":   { "type": "string", "format": "date-time" },
+        "publisher":     { "type": "string", "const": "order-service" }
+      }
+    }
+  }
+}

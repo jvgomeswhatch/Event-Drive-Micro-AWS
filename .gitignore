@@ -1,0 +1,62 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Terraform
+**/.terraform/
+**/.terraform.lock.hcl
+**/terraform.tfstate
+**/terraform.tfstate.backup
+**/terraform.tfvars
+!**/terraform.tfvars.example
+
+# Node
+node_modules/
+dist/
+build/
+.cache/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Docker
+.docker/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Test coverage
+coverage/
+.nyc_output/
+htmlcov/
+
+# LocalStack data
+docker/localstack/data/
+
+# Claude Code
+.claude/
+
+# Roadmap interno
+ROADMAP.md
+
+# AWS CLI installer (binário local, não deve subir)
+/aws/
+awscliv2.zip
+
+# Demo script gerado durante testes
+scripts/demo.sh
