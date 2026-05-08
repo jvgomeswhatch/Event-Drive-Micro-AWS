@@ -21,12 +21,13 @@ import (
 )
 
 type Processor struct {
-	db       *dynamodb.Client
-	sns      *sns.Client
-	idempot  *idempotencyClient
-	payments string
-	timeline string
-	topicARN string
+	db        *dynamodb.Client
+	sns       *sns.Client
+	idempot   *idempotencyClient
+	payments  string
+	timeline  string
+	topicARN  string
+	topicName string
 }
 
 type idempotencyClient struct {
@@ -40,13 +41,26 @@ func New(db *dynamodb.Client, snsClient *sns.Client) *Processor {
 		table: getenv("IDEMPOTENCY_TABLE", "idempotency-dev"),
 	}
 	return &Processor{
-		db:       db,
-		sns:      snsClient,
-		idempot:  idem,
-		payments: getenv("PAYMENTS_TABLE", "payments-dev"),
-		timeline: getenv("EVENT_TIMELINE_TABLE", "event-timeline-dev"),
-		topicARN: os.Getenv("PAYMENT_EVENTS_TOPIC_ARN"),
+		db:        db,
+		sns:       snsClient,
+		idempot:   idem,
+		payments:  getenv("PAYMENTS_TABLE", "payments-dev"),
+		timeline:  getenv("EVENT_TIMELINE_TABLE", "event-timeline-dev"),
+		topicARN:  os.Getenv("PAYMENT_EVENTS_TOPIC_ARN"),
+		topicName: getenv("PAYMENT_EVENTS_TOPIC_NAME", "payment-events-dev"),
 	}
+}
+
+func (p *Processor) resolveTopicARN(ctx context.Context) error {
+	if p.topicARN != "" {
+		return nil
+	}
+	out, err := p.sns.CreateTopic(ctx, &sns.CreateTopicInput{Name: aws.String(p.topicName)})
+	if err != nil {
+		return fmt.Errorf("resolve payment-events topic ARN: %w", err)
+	}
+	p.topicARN = *out.TopicArn
+	return nil
 }
 
 func (p *Processor) Process(ctx context.Context, event domain.OrderCreatedEvent) error {
@@ -121,37 +135,39 @@ func (p *Processor) Process(ctx context.Context, event domain.OrderCreatedEvent)
 	_, _ = p.db.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(p.timeline), Item: timelineItem})
 
 	// Publish SNS event
-	if p.topicARN != "" {
-		resultEvent := domain.PaymentResultEvent{
-			EventType:     "payment." + status,
-			Version:       "1",
-			PaymentID:     paymentID,
-			OrderID:       event.OrderID,
-			CustomerID:    event.CustomerID,
-			Items:         event.Items,
-			TotalAmount:   total,
-			Status:        status,
-			FailureReason: failureReason,
-			Meta: domain.EventMeta{
-				CorrelationID: correlationID,
-				PublishedAt:   now.Format(time.RFC3339),
-				Publisher:     "payment-service",
-			},
-		}
-		msgBytes, _ := json.Marshal(resultEvent)
-		if _, snsErr := p.sns.Publish(ctx, &sns.PublishInput{
-			TopicArn: aws.String(p.topicARN),
-			Message:  aws.String(string(msgBytes)),
-			MessageAttributes: map[string]snstypes.MessageAttributeValue{
-				"eventType":     {DataType: aws.String("String"), StringValue: aws.String("payment." + status)},
-				"correlationId": {DataType: aws.String("String"), StringValue: aws.String(correlationID)},
-			},
-		}); snsErr != nil {
-			// Payment already persisted — resolve idempotency so we don't recharge on retry,
-			// but propagate the error so the caller can decide (e.g. alert, DLQ).
-			_ = p.idempot.resolve(ctx, idemKey, map[string]string{"paymentId": paymentID, "status": status})
-			return fmt.Errorf("publish payment event to SNS: %w", snsErr)
-		}
+	if err := p.resolveTopicARN(ctx); err != nil {
+		_ = p.idempot.resolve(ctx, idemKey, map[string]string{"paymentId": paymentID, "status": status})
+		return err
+	}
+	resultEvent := domain.PaymentResultEvent{
+		EventType:     "payment." + status,
+		Version:       "1",
+		PaymentID:     paymentID,
+		OrderID:       event.OrderID,
+		CustomerID:    event.CustomerID,
+		Items:         event.Items,
+		TotalAmount:   total,
+		Status:        status,
+		FailureReason: failureReason,
+		Meta: domain.EventMeta{
+			CorrelationID: correlationID,
+			PublishedAt:   now.Format(time.RFC3339),
+			Publisher:     "payment-service",
+		},
+	}
+	msgBytes, _ := json.Marshal(resultEvent)
+	if _, snsErr := p.sns.Publish(ctx, &sns.PublishInput{
+		TopicArn: aws.String(p.topicARN),
+		Message:  aws.String(string(msgBytes)),
+		MessageAttributes: map[string]snstypes.MessageAttributeValue{
+			"eventType":     {DataType: aws.String("String"), StringValue: aws.String("payment." + status)},
+			"correlationId": {DataType: aws.String("String"), StringValue: aws.String(correlationID)},
+		},
+	}); snsErr != nil {
+		// Payment already persisted — resolve idempotency so we don't recharge on retry,
+		// but propagate the error so the caller can decide (e.g. alert, DLQ).
+		_ = p.idempot.resolve(ctx, idemKey, map[string]string{"paymentId": paymentID, "status": status})
+		return fmt.Errorf("publish payment event to SNS: %w", snsErr)
 	}
 
 	_ = p.idempot.resolve(ctx, idemKey, map[string]string{"paymentId": paymentID, "status": status})
