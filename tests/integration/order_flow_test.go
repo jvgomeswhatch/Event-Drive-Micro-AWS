@@ -26,8 +26,11 @@ func TestFluxoOrdemCompleto(t *testing.T) {
 	ctx := context.Background()
 	sqsCli := sqsClient(t)
 
-	paymentURL := getQueueURL(ctx, t, sqsCli, envOu("PAYMENT_QUEUE_NAME", "payment-queue-dev"))
-	purgeQueue(ctx, t, sqsCli, paymentURL)
+	// payment-service publishes the result to SNS payment-events-dev, which fans out
+	// to notification-queue-dev (filter: payment.succeeded, payment.failed).
+	// payment-queue-dev is the INPUT queue of payment-service, not its output.
+	notificationURL := getQueueURL(ctx, t, sqsCli, envOu("NOTIFICATION_QUEUE_NAME", "notification-queue-dev"))
+	purgeQueue(ctx, t, sqsCli, notificationURL)
 
 	token := issueToken(t, "cust-integration")
 
@@ -39,8 +42,8 @@ func TestFluxoOrdemCompleto(t *testing.T) {
 	t.Logf("order created: %s", orderID)
 
 	// payment-service has up to 30s to consume order.created and publish its result.
-	body, receipt := pollQueue(ctx, t, sqsCli, paymentURL, 30*time.Second)
-	deleteMsg(ctx, sqsCli, paymentURL, receipt)
+	body, receipt := pollQueue(ctx, t, sqsCli, notificationURL, 30*time.Second)
+	deleteMsg(ctx, sqsCli, notificationURL, receipt)
 
 	var result map[string]any
 	if err := json.Unmarshal([]byte(body), &result); err != nil {
@@ -55,17 +58,18 @@ func TestFluxoOrdemCompleto(t *testing.T) {
 }
 
 // TestDLQ_MensagemInvalida verifies that a message that fails schema validation
-// is not silently dropped but eventually lands in the order DLQ.
-// The message is sent directly to the order-queue (bypassing HTTP) so the
-// order-service consumer receives and validates it.
+// is not silently dropped but eventually lands in the payment DLQ.
+// The message is sent directly to payment-queue-dev — the queue that payment-service
+// actually consumes. The payment-service sets visibility=0 on schema errors,
+// which exhausts maxReceiveCount and triggers SQS redrive to payment-dlq-dev.
 func TestDLQ_MensagemInvalida(t *testing.T) {
 	ctx := context.Background()
 	sqsCli := sqsClient(t)
 
-	dlqURL := getQueueURL(ctx, t, sqsCli, envOu("ORDER_DLQ_NAME", "order-dlq-dev"))
+	dlqURL := getQueueURL(ctx, t, sqsCli, envOu("PAYMENT_DLQ_NAME", "payment-dlq-dev"))
 	purgeQueue(ctx, t, sqsCli, dlqURL)
 
-	orderURL := getQueueURL(ctx, t, sqsCli, envOu("ORDER_QUEUE_NAME", "order-queue-dev"))
+	paymentURL := getQueueURL(ctx, t, sqsCli, envOu("PAYMENT_QUEUE_NAME", "payment-queue-dev"))
 
 	// version "99" is unknown — eventschema.Validate will reject it.
 	invalidPayload := fmt.Sprintf(
@@ -73,11 +77,11 @@ func TestDLQ_MensagemInvalida(t *testing.T) {
 		time.Now().UnixNano(),
 	)
 	_, err := sqsCli.SendMessage(ctx, &sqs.SendMessageInput{
-		QueueUrl:    aws.String(orderURL),
+		QueueUrl:    aws.String(paymentURL),
 		MessageBody: aws.String(invalidPayload),
 	})
 	if err != nil {
-		t.Fatalf("SendMessage to order-queue: %v", err)
+		t.Fatalf("SendMessage to payment-queue: %v", err)
 	}
 
 	// consumer sets visibility=0 on failure; after maxReceiveCount the message
