@@ -6,20 +6,20 @@ Plataforma de processamento de pedidos event-driven, rodando 100% local com Terr
 
 ```
                        ┌──────────────────────────────────┐
-                       │        Frontend (React + Vite)    │
-                       │    Dashboard em http://localhost:5173
+                       │    Frontend (React + Vite)       │
+                       │Dashboard http://localhost:5173 │
                        └─────────────┬────────────────────┘
                                      │ HTTP REST
                        ┌─────────────▼────────────────────┐
-                       │           order-service           │
-                       │  Go HTTP server — porta 3001      │
-                       │  - Valida input + JWT             │
-                       │  - Persiste pedido (DynamoDB)     │
-                       │  - Publica order.created → SNS    │
+                       │           order-service          │
+                       │  Go HTTP server — porta 3001     │
+                       │  - Valida input + JWT            │
+                       │  - Persiste pedido (DynamoDB)    │
+                       │  - Publica order.created → SNS   │
                        └──────────────┬───────────────────┘
                                       │ SNS fan-out
               ┌───────────────────────▼──────────────────────────┐
-              │              SNS: order-events-dev                │
+              │              SNS: order-events-dev               │
               └──────┬───────────────────────────────────────────┘
                      │ SQS: payment-queue-dev
        ┌─────────────▼──────────────┐
@@ -30,13 +30,13 @@ Plataforma de processamento de pedidos event-driven, rodando 100% local com Terr
        │  → SNS: payment-events-dev │
        └──────┬──────────┬──────────┘
               │          │ SQS: inventory-queue-dev + notification-queue-dev
-              │    ┌─────▼────────────────┐
-              │    │   inventory-service  │
-              │    │  Go consumer — 3003  │
-              │    │  - Reserva estoque   │
-              │    │  - inventory.reserved│
-              │    │  → SNS: inventory-events-dev
-              │    └─────┬───────────────┘
+              │    ┌─────▼──────────────────────┐
+              │    │  inventory-service         │
+              │    │  Go consumer — 3003        │
+              │    │  Reserva estoque           │
+              │    │  inventory.reserved        │
+              │    │SNS:inventory-events-dev    │
+              │    └─────┬──────────────────────┘
               │          │ SQS: notification-queue-dev
        ┌──────▼──────────▼──────────┐
        │     notification-service   │

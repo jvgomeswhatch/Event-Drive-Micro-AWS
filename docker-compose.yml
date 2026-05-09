@@ -6,6 +6,7 @@ volumes:
   localstack-data:
   loki-data:
   grafana-data:
+  terraform-providers:
 
 services:
   # ─────────────────────────────────────────
@@ -40,13 +41,18 @@ services:
   # Terraform bootstrap (runs once)
   # ─────────────────────────────────────────
   terraform-init:
-    image: hashicorp/terraform:1.8
+    build:
+      context: ./infra
+      dockerfile: ../docker/terraform/Dockerfile
+    image: serverless-first-terraform
     container_name: terraform-init
     working_dir: /infra
     entrypoint: ["/bin/sh", "/infra/scripts/tf-apply.sh"]
     volumes:
       - ./infra:/infra
       - ./scripts:/infra/scripts
+      # Protege os providers pré-instalados na imagem do overlay do volume host
+      - terraform-providers:/infra/envs/dev/.terraform
     environment:
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
@@ -82,6 +88,8 @@ services:
     depends_on:
       localstack:
         condition: service_healthy
+      terraform-init:
+        condition: service_completed_successfully
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "-O", "/dev/null", "http://localhost:3001/health"]
@@ -112,6 +120,8 @@ services:
     depends_on:
       localstack:
         condition: service_healthy
+      terraform-init:
+        condition: service_completed_successfully
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "-O", "/dev/null", "http://localhost:3002/health"]
@@ -142,6 +152,8 @@ services:
     depends_on:
       localstack:
         condition: service_healthy
+      terraform-init:
+        condition: service_completed_successfully
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "-O", "/dev/null", "http://localhost:3003/health"]
@@ -172,6 +184,8 @@ services:
     depends_on:
       localstack:
         condition: service_healthy
+      terraform-init:
+        condition: service_completed_successfully
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "-O", "/dev/null", "http://localhost:3004/health"]

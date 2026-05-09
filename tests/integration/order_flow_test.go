@@ -22,15 +22,17 @@ import (
 //  4. payment-service consumes and emits payment.succeeded or payment.failed
 //
 // All assertions use t.Fatal — no t.Skip.
+// TestFluxoOrdemCompleto verifies the full happy path:
+//  1. Obtain JWT from order-service
+//  2. POST /orders → 202 Accepted
+//  3. order-service publishes order.created → SNS fan-out reaches payment-queue
+//  4. payment-service consumes and persists a payment record in DynamoDB
+//
+// The assertion is done against the payments-dev DynamoDB table so that the
+// notification-service consumer does not race the test for the SQS message.
 func TestFluxoOrdemCompleto(t *testing.T) {
 	ctx := context.Background()
-	sqsCli := sqsClient(t)
-
-	// payment-service publishes the result to SNS payment-events-dev, which fans out
-	// to notification-queue-dev (filter: payment.succeeded, payment.failed).
-	// payment-queue-dev is the INPUT queue of payment-service, not its output.
-	notificationURL := getQueueURL(ctx, t, sqsCli, envOu("NOTIFICATION_QUEUE_NAME", "notification-queue-dev"))
-	purgeQueue(ctx, t, sqsCli, notificationURL)
+	dynCli := dynamoClient(t)
 
 	token := issueToken(t, "cust-integration")
 
@@ -41,20 +43,13 @@ func TestFluxoOrdemCompleto(t *testing.T) {
 	}, "")
 	t.Logf("order created: %s", orderID)
 
-	// payment-service has up to 30s to consume order.created and publish its result.
-	body, receipt := pollQueue(ctx, t, sqsCli, notificationURL, 30*time.Second)
-	deleteMsg(ctx, sqsCli, notificationURL, receipt)
-
-	var result map[string]any
-	if err := json.Unmarshal([]byte(body), &result); err != nil {
-		t.Fatalf("could not parse payment event: %v — raw: %s", err, body)
+	// Poll DynamoDB payments-dev until payment-service writes the result.
+	// The SQS long-poll cycle in payment-service is up to 20s, so allow 60s total.
+	status := pollPaymentStatus(ctx, t, dynCli, orderID, 60*time.Second)
+	if status != "succeeded" && status != "failed" {
+		t.Fatalf("expected payment status succeeded or failed, got %q", status)
 	}
-
-	et, _ := result["eventType"].(string)
-	if et != "payment.succeeded" && et != "payment.failed" {
-		t.Fatalf("expected eventType payment.succeeded or payment.failed, got %q", et)
-	}
-	t.Logf("payment event received: eventType=%s", et)
+	t.Logf("payment recorded in DynamoDB: status=%s orderId=%s", status, orderID)
 }
 
 // TestDLQ_MensagemInvalida verifies that a message that fails schema validation

@@ -15,12 +15,23 @@ echo "==> Running Terraform $TF_ARGS in $INFRA_DIR"
 
 cd "$INFRA_DIR"
 
-terraform init -backend=false -input=false
-
 if [ "$TF_ARGS" = "destroy" ]; then
+  terraform init -backend=false -input=false
   terraform destroy -auto-approve -input=false
 else
-  terraform apply -auto-approve -input=false
+  attempt=1
+  max_attempts=5
+  while [ $attempt -le $max_attempts ]; do
+    echo "==> Terraform init+apply attempt $attempt/$max_attempts..."
+    # providers já estão na imagem Docker; init apenas sincroniza módulos e lock file
+    if terraform init -backend=false -input=false && terraform apply -auto-approve -input=false; then
+      echo "==> Terraform done."
+      exit 0
+    fi
+    echo "==> Attempt $attempt failed, waiting 10s before retry..."
+    attempt=$((attempt + 1))
+    sleep 10
+  done
+  echo "==> Terraform apply failed after $max_attempts attempts."
+  exit 1
 fi
-
-echo "==> Terraform done."

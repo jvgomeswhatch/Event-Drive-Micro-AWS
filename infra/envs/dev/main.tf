@@ -90,7 +90,10 @@ module "sns" {
 
   topics = ["order-events", "payment-events", "inventory-events"]
 
-  # SNS → SQS subscriptions (filtros como listas de strings — LocalStack não suporta prefix matching)
+  # LocalStack 3.x não aplica filter_policy com confiança quando raw_message_delivery=true.
+  # As filas de destino que têm consumers que já filtram internamente (notification-queue)
+  # recebem tudo sem filtro SNS; a filtragem é feita no código do consumer.
+  # Filas de processamento crítico (payment-queue, inventory-queue) mantêm o filtro.
   subscriptions = [
     {
       topic  = "order-events"
@@ -105,12 +108,12 @@ module "sns" {
     {
       topic  = "payment-events"
       queue  = "notification-queue"
-      filter = { eventType = ["payment.succeeded", "payment.failed"] }
+      filter = {}
     },
     {
       topic  = "inventory-events"
       queue  = "notification-queue"
-      filter = { eventType = ["inventory.reserved", "inventory.failed"] }
+      filter = {}
     },
   ]
 

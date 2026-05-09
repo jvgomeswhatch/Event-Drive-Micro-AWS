@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
@@ -179,6 +180,37 @@ func countMessages(ctx context.Context, t *testing.T, client *sqs.Client, queueU
 	count := 0
 	fmt.Sscanf(out.Attributes["ApproximateNumberOfMessages"], "%d", &count)
 	return count
+}
+
+// pollPaymentStatus polls the payments-dev DynamoDB table until the payment for the given
+// orderId is written by payment-service. Returns the payment status ("succeeded" or "failed").
+// Fails the test if no record appears within the timeout.
+func pollPaymentStatus(ctx context.Context, t *testing.T, client *dynamodb.Client, orderID string, timeout time.Duration) string {
+	t.Helper()
+	table := envOu("PAYMENTS_TABLE", "payments-dev")
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		out, err := client.Scan(ctx, &dynamodb.ScanInput{
+			TableName:        aws.String(table),
+			FilterExpression: aws.String("orderId = :oid"),
+			ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+				":oid": &dynamodbtypes.AttributeValueMemberS{Value: orderID},
+			},
+		})
+		if err != nil {
+			t.Logf("DynamoDB scan: %v", err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		if len(out.Items) > 0 {
+			if v, ok := out.Items[0]["status"].(*dynamodbtypes.AttributeValueMemberS); ok {
+				return v.Value
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Fatalf("payment record not found in DynamoDB for orderId %s after %s", orderID, timeout)
+	return ""
 }
 
 // purgeQueue drains a queue and waits briefly for SQS to propagate the purge.
