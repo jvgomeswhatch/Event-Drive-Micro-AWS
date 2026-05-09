@@ -6,7 +6,6 @@ volumes:
   localstack-data:
   loki-data:
   grafana-data:
-  terraform-providers:
 
 services:
   # ─────────────────────────────────────────
@@ -41,18 +40,13 @@ services:
   # Terraform bootstrap (runs once)
   # ─────────────────────────────────────────
   terraform-init:
-    build:
-      context: ./infra
-      dockerfile: ../docker/terraform/Dockerfile
-    image: serverless-first-terraform
+    image: hashicorp/terraform:1.8
     container_name: terraform-init
     working_dir: /infra
     entrypoint: ["/bin/sh", "/infra/scripts/tf-apply.sh"]
     volumes:
       - ./infra:/infra
       - ./scripts:/infra/scripts
-      # Protege os providers pré-instalados na imagem do overlay do volume host
-      - terraform-providers:/infra/envs/dev/.terraform
     environment:
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
